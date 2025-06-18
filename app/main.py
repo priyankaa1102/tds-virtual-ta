@@ -1,121 +1,108 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import json
 from pathlib import Path
 import logging
-from thefuzz import fuzz  # For fuzzy matching
+from thefuzz import fuzz
 
-# Initialize logging
+# === Setup Logging ===
 logging.basicConfig(
     filename='api.log',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+# === FastAPI App ===
 app = FastAPI(title="TDS Virtual TA", version="1.0")
 
+# === Pydantic Models ===
 class QuestionRequest(BaseModel):
     question: str
-    image: Optional[str] = None
+    image: Optional[str] = None  # Reserved for future use
 
 class Resource(BaseModel):
     title: str
     url: str
     source: str  # 'discourse' or 'course'
-    type: Optional[str] = None  # For course resources
-    tags: Optional[list] = None  # For discourse posts
-    week: Optional[str] = None  # For course resources
+    type: Optional[str] = None
+    tags: Optional[List[str]] = None
+    week: Optional[str] = None
 
 class APIResponse(BaseModel):
     answer: str
-    links: list[Resource]
+    links: List[Resource]
 
+# === Constants ===
 DATA_FILE = Path("data/tds_data.json")
 
+# === Utility: Load and validate JSON ===
 def load_data():
-    """Load and validate scraped data"""
+    if not DATA_FILE.exists():
+        logging.error("Data file missing")
+        raise HTTPException(status_code=503, detail="Data not available yet.")
     try:
-        with open(DATA_FILE) as f:
+        with open(DATA_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        
-        # Validate data structure
         if not isinstance(data.get("discourse_posts", []), list):
-            raise ValueError("Invalid discourse posts format")
+            raise ValueError("Invalid discourse format")
         if not isinstance(data.get("course_content", {}).get("weeks", {}), dict):
-            raise ValueError("Invalid course content format")
-            
+            raise ValueError("Invalid course format")
         return data
     except Exception as e:
-        logging.error(f"Data loading failed: {str(e)}")
-        raise HTTPException(
-            status_code=503,
-            detail="Data service unavailable. Please try again later."
-        )
+        logging.exception("Failed to load data")
+        raise HTTPException(status_code=503, detail="Failed to read data.")
 
+# === Main API Endpoint ===
 @app.post("/api/", response_model=APIResponse)
 def answer_question(request: QuestionRequest):
-    """Enhanced search endpoint with fuzzy matching"""
-    try:
-        data = load_data()
-        query = request.question.lower()
-        results = []
-        logging.info(f"New query: {query}")
+    query = request.question.lower()
+    data = load_data()
+    results = []
+    logging.info(f"Query received: {query}")
 
-        # Search discourse posts
-        for post in data.get("discourse_posts", []):
-            title = post.get("title", "").lower()
-            tags = [tag.lower() for tag in post.get("tags", [])]
-            
-            # Fuzzy match with title and tags
-            if (fuzz.partial_ratio(query, title) > 70 or
-                any(fuzz.partial_ratio(query, tag) > 80 for tag in tags)):
-                
+    # --- Search Discourse Posts ---
+    for post in data.get("discourse_posts", []):
+        title = post.get("title", "").lower()
+        tags = [tag.lower() for tag in post.get("tags", [])]
+        if fuzz.partial_ratio(query, title) > 70 or any(fuzz.partial_ratio(query, tag) > 80 for tag in tags):
+            results.append(Resource(
+                title=post["title"],
+                url=post["url"],
+                source="discourse",
+                tags=post.get("tags", [])
+            ))
+
+    # --- Search Course Content ---
+    for week, resources in data.get("course_content", {}).get("weeks", {}).items():
+        for res in resources:
+            res_title = res.get("title", "").lower()
+            if fuzz.partial_ratio(query, res_title) > 70:
                 results.append(Resource(
-                    title=post["title"],
-                    url=post["url"],
-                    source="discourse",
-                    tags=post.get("tags", [])
+                    title=res["title"],
+                    url=res["url"],
+                    source="course",
+                    type=res.get("type"),
+                    week=week
                 ))
 
-        # Search course content
-        for week, resources in data.get("course_content", {}).get("weeks", {}).items():
-            for resource in resources:
-                if fuzz.partial_ratio(query, resource["title"].lower()) > 70:
-                    results.append(Resource(
-                        title=resource["title"],
-                        url=resource["url"],
-                        source="course",
-                        type=resource.get("type"),
-                        week=week
-                    ))
+    # --- Sort Results by Relevance ---
+    results.sort(
+        key=lambda x: max(
+            fuzz.partial_ratio(query, x.title.lower()),
+            max([fuzz.partial_ratio(query, tag) for tag in x.tags], default=0) if x.tags else 0
+        ),
+        reverse=True
+    )
 
-        # Sort by relevance (simple heuristic)
-        results.sort(
-            key=lambda x: max(
-                fuzz.partial_ratio(query, x.title.lower()),
-                max(fuzz.partial_ratio(query, tag) for tag in x.tags or []) if x.tags else 0
-            ),
-            reverse=True
-        )
+    return APIResponse(
+        answer=f"Found {len(results)} relevant resources" if results else "No relevant resources found.",
+        links=results[:10]
+    )
 
-        return APIResponse(
-            answer=f"Found {len(results)} relevant resources",
-            links=results[:10]  # Return top 10 most relevant
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Search failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="An unexpected error occurred"
-        )
-
+# === Health Check Endpoint ===
 @app.get("/health")
 def health_check():
-    """Service health endpoint"""
     try:
         data = load_data()
         return {
@@ -131,6 +118,7 @@ def health_check():
             "error": str(e)
         }
 
+# === Favicon Override ===
 @app.get("/favicon.ico", include_in_schema=False)
-async def favicon():
+def favicon():
     return ""
