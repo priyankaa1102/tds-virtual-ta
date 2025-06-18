@@ -1,30 +1,35 @@
 from fastapi.testclient import TestClient
 from app.main import app
 import json
-from pathlib import Path
+import os
 
 client = TestClient(app)
-SAMPLE_DATA = Path(__file__).parent / "test_data/sample_response.json"
 
 def test_health_check():
     response = client.get("/health")
     assert response.status_code == 200
-    assert "data_stats" in response.json()
+    assert response.json() == {"status": "ok"}
 
-def test_answer_endpoint(monkeypatch):
-    # Mock the data loading
-    def mock_load():
-        with open(SAMPLE_DATA) as f:
-            return json.load(f)
+def test_answer_endpoint(tmp_path):
+    # Setup test data
+    test_data = {
+        "posts": [
+            {"title": "Pandas Help", "url": "https://example.com/1"},
+            {"title": "GPT Models", "url": "https://example.com/2"}
+        ]
+    }
     
-    monkeypatch.setattr("app.main.load_knowledge_base", mock_load)
+    # Create temporary data file
+    os.makedirs("data", exist_ok=True)
+    with open("data/tds_data.json", "w") as f:
+        json.dump(test_data, f)
     
-    # Test with known question
+    # Test API response
     response = client.post(
         "/api/",
-        json={"question": "pandas"}
+        json={"question": "test", "image": None}
     )
     
     assert response.status_code == 200
-    assert len(response.json()["links"]) > 0
-    assert "pandas" in response.json()["links"][0]["text"].lower()
+    assert len(response.json()["links"]) == 2
+    assert "Pandas Help" in response.json()["links"][0]["title"]
