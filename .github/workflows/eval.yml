@@ -1,0 +1,33 @@
+name: Evaluation
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'  # Runs every Monday at 12:00 UTC
+  workflow_dispatch:       # Allows manual runs
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install promptfoo
+      run: npx -y promptfoo@latest
+        
+    - name: Run evaluation
+      run: |
+        npx promptfoo eval \
+          --config project-tds-virtual-ta-promptfoo.yaml \
+          --output results.json
+          
+    - name: Upload results
+      uses: actions/upload-artifact@v3
+      with:
+        name: evaluation-results
+        path: results.json
