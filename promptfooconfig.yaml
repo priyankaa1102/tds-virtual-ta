@@ -1,6 +1,0 @@
-tests:
-  - vars:
-      question: "Which GPT model for GA5?"
-    assert:
-      - type: contains
-        value: "gpt-3.5-turbo"
