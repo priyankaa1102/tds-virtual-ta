@@ -1,5 +1,15 @@
 providers:
-  - name: local-ta-api
-    type: openai
+  - id: my-api
     config:
       url: http://localhost:8000/api/
+      headers:
+        Authorization: Bearer ${AI_PROXY_TOKEN}  # Optional if your API uses auth
+    type: openai
+
+prompts:
+  - question: "What is the grading policy?"
+  - question: "Can I use GPT-4 for GA5 Q8?"
+  - question: "Is week 6 part of quiz 2?"
+
+vars:
+  AI_PROXY_TOKEN: eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6IjIzZHMzMDAwMDc5QGRzLnN0dWR5LmlpdG0uYWMuaW4ifQ.AphVcXVq-GD9oi-gTsQxBAxdyJePk2BAksAfDw-noTo
