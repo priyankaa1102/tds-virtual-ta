@@ -1,0 +1,12 @@
+{
+  "posts": [
+    {
+      "title": "How to use Pandas?",
+      "url": "https://example.com/1"
+    },
+    {
+      "title": "GPT Model Requirements",
+      "url": "https://example.com/2"
+    }
+  ]
+}
