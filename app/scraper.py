@@ -1,113 +1,120 @@
 import json
-import os
 import time
-import requests
 from datetime import datetime
 from pathlib import Path
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
+from webdriver_manager.chrome import ChromeDriverManager
+import requests
 
 # Constants
+COURSE_URL = "https://tds.s-anand.net/#/2025-01/"
 DISCOURSE_URL = "https://discourse.onlinedegree.iitm.ac.in/c/courses/tds-kb/34"
+START_DATE = "2025-01-01"
+END_DATE = "2025-04-14"
 
-# Configure paths
 DATA_DIR = Path("data")
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATA_FILE = DATA_DIR / "tds_data.json"
+DATA_DIR.mkdir(exist_ok=True)
 
-def classify_resource(url):
-    if "youtube.com" in url or "youtu.be" in url:
-        return "video"
-    elif url.endswith(".pdf"):
-        return "pdf"
-    elif "quiz" in url.lower():
-        return "quiz"
-    return "link"
+def classify_resource(href):
+    if 'pdf' in href:
+        return 'pdf'
+    elif 'youtube' in href:
+        return 'video'
+    elif 'quiz' in href:
+        return 'quiz'
+    return 'link'
 
 def scrape_course_content():
     print("Scraping course content...")
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
     try:
-        driver.get("https://tds.s-anand.net/#/2025-01/")
-        time.sleep(6)  # let JS load
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        
+        driver.get(COURSE_URL)
+        time.sleep(6)
+        soup = BeautifulSoup(driver.page_source, "html.parser")
         course_data = {"weeks": {}}
-        week_divs = soup.find_all("div", class_="week-container")
-        
-        for week_div in week_divs:
-            week_title = week_div.find("h2")
-            week_name = week_title.text.strip() if week_title else "Untitled Week"
-            links = week_div.find_all("a", href=True)
+        week_containers = soup.find_all("div", class_="week-container")
 
-            course_data["weeks"][week_name] = [
-                {
-                    "title": link.text.strip(),
-                    "url": link['href'],
-                    "type": classify_resource(link['href'])
-                }
-                for link in links
-            ]
+        for week_div in week_containers:
+            heading = week_div.find("h2")
+            if not heading:
+                continue
+            week_title = heading.get_text(strip=True)
+            resources = []
+            for link in week_div.find_all("a", href=True):
+                resources.append({
+                    "title": link.get_text(strip=True),
+                    "url": link["href"],
+                    "type": classify_resource(link["href"])
+                })
+            course_data["weeks"][week_title] = resources
         return course_data
     finally:
         driver.quit()
 
 def scrape_discourse():
     print("Scraping Discourse posts...")
-    session = requests.Session()
     all_posts = []
     page = 0
-
+    session = requests.Session()
+    
     while True:
         page += 1
-        url = f"{DISCOURSE_URL}?page={page}"
-        print(f"Processing {url}")
-        resp = session.get(url)
-        if resp.status_code != 200:
+        print(f"Discourse page {page}")
+        res = session.get(f"{DISCOURSE_URL}?page={page}")
+        if res.status_code != 200:
             break
 
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        topic_links = soup.select("a.title")
-
-        if not topic_links:
+        soup = BeautifulSoup(res.text, "html.parser")
+        rows = soup.find_all("tr", class_="topic-list-item")
+        if not rows:
             break
 
-        for link in topic_links:
-            topic_url = "https://discourse.onlinedegree.iitm.ac.in" + link['href']
-            all_posts.append({
-                "title": link.text.strip(),
-                "url": topic_url,
-                "tags": [],
-                "date": datetime.now().isoformat()
-            })
-
+        for row in rows:
+            try:
+                a_tag = row.find("a", class_="title")
+                if not a_tag:
+                    continue
+                url = f"https://discourse.onlinedegree.iitm.ac.in{a_tag['href']}"
+                title = a_tag.get_text(strip=True)
+                tags = [tag.get_text(strip=True) for tag in row.find_all("a", class_="discourse-tag")]
+                date_span = row.find("span", class_="relative-date")
+                date = date_span["title"] if date_span else None
+                all_posts.append({
+                    "title": title,
+                    "url": url,
+                    "tags": tags,
+                    "date": date
+                })
+            except Exception as e:
+                print(f"Error parsing row: {e}")
         time.sleep(1)
     return all_posts
 
-def save_data(course_content, discourse_posts):
-    metadata = {
-        "course_url": "https://tds.s-anand.net/#/2025-01/",
-        "discourse_url": DISCOURSE_URL,
-        "date_range": {
-            "start": "2025-01-01T00:00:00",
-            "end": "2025-04-14T00:00:00"
-        }
-    }
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+def save_data(course, discourse):
+    print(f"Saving data to {DATA_FILE}")
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "last_updated": datetime.now().isoformat(),
-            "course_content": course_content,
-            "discourse_posts": discourse_posts,
-            "metadata": metadata
+            "course_content": course,
+            "discourse_posts": discourse,
+            "metadata": {
+                "course_url": COURSE_URL,
+                "discourse_url": DISCOURSE_URL,
+                "date_range": {
+                    "start": START_DATE + "T00:00:00",
+                    "end": END_DATE + "T00:00:00"
+                }
+            }
         }, f, indent=2, ensure_ascii=False)
-    print(f"✅ Data saved to {DATA_FILE}")
 
 if __name__ == "__main__":
     try:
-        course_data = scrape_course_content()
-        posts_data = scrape_discourse()
-        save_data(course_data, posts_data)
+        course = scrape_course_content()
+        discourse = scrape_discourse()
+        save_data(course, discourse)
     except Exception as e:
-        print(f"❌ Scraping failed: {e}")
+        print(f"Scraping failed: {e}")
