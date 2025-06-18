@@ -1,0 +1,5 @@
+providers:
+  - name: local-ta-api
+    type: openai
+    config:
+      url: http://localhost:8000/api/
